@@ -1,0 +1,154 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2512
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\froman\fcharset0 Times-Roman;}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue233;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\cssrgb\c0\c0\c93333;\cssrgb\c0\c1\c1;}
+{\*\listtable{\list\listtemplateid1\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid1\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid1}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}}
+\margl1440\margr1440\vieww13100\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 Documentation for calculating contributions by employees and PACs associated with the Russell 1000 index\
+\
+By: Eric LaRose\
+Last Updated: May 8, 2020\
+\
+NOTE: The R code file \'93Rusell_1000_Employee_PAC_Contributions.Rmd\'94 contains all the code needed to replicate this analysis.\
+\
+Overview:\
+\
+This folder contains the results showing political contributions by employees of, and PACs associated with, the Russell 1000 index over the period from 2009-2020. More specifically, we try to calculate:\
+\
+1) The amount which individuals who are employees of Russell 1000 companies contributed to political entities (federal candidates, PACs, and party committees), to SuperPACs/Hybrid PACs, and in independent expenditures  in each year.\
+2) The amount which corporate PACs associated with the Russell 1000 index contributed to political entities (federal candidates, PACs, and party committees) in each year. \
+\
+For both contributions from individuals and from corporate PACs, we break down contributions by industry, as defined by 2-digit, 4-digit, and 6-digit NAICS codes. This process is described in more detail below. Additionally, for contributions from individuals, we break down contributions into executives (positions such as CFO, CEO, etc.) and non-executives. These calculations are described in more detail below.\
+\
+The data sources and more detailed descriptions of the data cleaning processes are described below.\
+\
+Data Sources and Cleaning Steps:\
+\
+Data on political expenditures, the primary source of data in this project, comes from the Federal Election Commission (FEC), which provides bulk data on election spending available at {\field{\*\fldinst{HYPERLINK "https://www.fec.gov/data/browse-data/?tab=bulk-data"}}{\fldrslt 
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul \ulc2 https://www.fec.gov/data/browse-data/?tab=bulk-data}}
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul \ulc2 . 
+\f0 \cf0 \kerning1\expnd0\expndtw0 \ulnone Note that all data was last downloaded on the day that this documentation was last updated, as listed in the header above. \
+\
+1. Contributions by individuals: Data on contributions by individuals primarily comes from the bulk data under \'93Contributions by individuals\'94 at the above link. This data is downloaded in six separate files, corresponding to each two-year election cycle (2009-2010, \'85, 2019-2020). For years 2014 and prior, this data includes all contributions for which the reporting period amount is $200 or more. For years 2015 and later, contributions are included if the cycle-to-date or year-to-date amount is over $200. Thus, calculated individual contribution amounts are not necessarily comparable between a year in (2009,\'85,2014) and another year in (2015,\'85,2020). Documentation for this dataset is available at {\field{\*\fldinst{HYPERLINK "https://www.fec.gov/campaign-finance-data/contributions-individuals-file-description/"}}{\fldrslt 
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul https://www.fec.gov/campaign-finance-data/contributions-individuals-file-description/}}
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul .. 
+\f0 \cf3 \ulnone The data on individual contributions includes the amount of each contribution as well as the name of the employer of each individual who contributes. We use the name of the employer to identify employees of the Russell 1000 corporations, as described below. 
+\f1 \cf2 \ul \
+
+\f0 \cf0 \kerning1\expnd0\expndtw0 \ulnone 2. Contributions by PACs: Data on contributions by PACs comes from the bulk data under \'93Contributions from committees to candidates & independent expenditures\'94 and \'93Any transaction from one committee to another\'94, both available at the above link. The former dataset includes contributions by PACs made to candidates; the latter dataset contains contributions from PACs to party committees and other political committees. Documentation for these datasets is available at the above link. Both of these datasets include the amount of each contribution as well as the name of the PAC who contributes. We use the PAC name to identify PACs associated with the Russell 1000 corporations.\
+\
+A list of the Russell 1000 corporations is available at https://content.ftserussell.com/sites/default/files/support_document/RU1000_MembershipList_20190701.pdf. We use the list of Russell 1000 corporations as defined in July 2019, and the list is updated annually every summer. The Russell 1000 is a stock-market index that includes the 1,000 largest public companies incorporated in the United States, as measured by market capitalization. \
+\
+From the list of Russell 1000 corporations, we compile a list of PACs associated with the Russell 1000 companies, which is listed in the Excel file \'93Russell_1000_Corporations_Associated_PACs.xlsx\'94. This list was compiled manually, primarily by information found on Open Secrets, which tracks all corporate PACs, and supplemented by information on company websites. Note that slightly over half of Russell 1000 corporations do not have a PAC, and some corporations have more than one PAC. \
+\
+A common issue is that self-reported employer names in the individual contributions dataset do not exactly line up with corporation names in the Russell 1000 index. There are several reasons for this. One is the possibility of minor semantic changes: \'93Walmart\'94 vs. \'93Wal-Mart\'94, \'93Walmart\'94 vs. \'93Walmart Inc.\'94, and so on. For this reason, we use a method called a \'93fuzzy merge\'94 to merge on self-reported employer names and the list of Russell 1000 corporations. This method is described in more detail below. However, there are several other reasons which a simple fuzzy merge will not pick up on. First, there is the possibility of name changes or mergers and acquisitions by companies. Second, there is the possibility that some employees may report an acronym for the company name, e.g. \'93GEICO\'94 instead of \'93Government Employees Insurance Company\'94. Third, there is the possibility that an employee may report the subsidiary of a parent company, as the Russell 1000 corporation only includes ultimate parent-level companies; many of these companies are holdings companies that contain many subsidiaries. For instance, Google is a subsidiary of Alphabet - an employee reporting \'93Google\'94 in the individual contributions data technically works for Alphabet, but a fuzzy merge would not pick up on this. \
+\
+For these reasons, we manually compiled a list of potential \'93common names\'94 associated with each Russell 1000 company, i.e. a list of reasonable names that employees would self-report in the contributions data. This information is contained in the Excel file \'93Russell_1000_Company_Official_Names_vs_Common_Names.xlsx\'94. The left-hand column contains the official name of the company reported in the Russell 1000 index. The right-hand column contains the list of reasonable self-reported names associated with each company, which includes subsidiaries, acronyms, name changes, and mergers and acquisitions. Information on all of these items was obtained in part from company websites. The bulk of these potential common names, however, consist of subsidiaries; for instance, Alphabet owns Google and likewise, GEICO is a subsidiary of Berkshire Hathaway. Information on subsidiaries is obtained in part from company websites but primarily from SEC filings, in which companies are required to report all subsidiaries. For instance, a list of Walmart subsidiaries can be viewed here: {\field{\*\fldinst{HYPERLINK "https://www.sec.gov/Archives/edgar/data/104169/000102140801500157/dex21.htm"}}{\fldrslt 
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul https://www.sec.gov/Archives/edgar/data/104169/000102140801500157/dex21.htm}}
+\f1 \cf3 \expnd0\expndtw0\kerning0
+\ul \ulc3 . \
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0 \cf3 \ulnone With this list of official and common names, we can link Russell 1000 company names with employer names reported in the individual contributions dataset. Namely, we do a \'93fuzzy merge\'94 between self-reported employer names and the list of \'93common names\'94, and then do a simple merge between common names and official company names. To conduct the fuzzy merge, we use a method called cosine similarity, which can effectively return a number between 0 and 1 that indicates how similar two strings are. \'93Walmart\'94 and \'93Wal Mart\'94 have a cosine similarity very close to 1, for instance, while \'93Walmart\'94 and \'93Applebees\'94 have a cosine similarity very close to 0. \cf0 \kerning1\expnd0\expndtw0  Before we do this fuzzy merge, we first remove from our list of common names and self-reported employer names all punctuation, as well as common phrases such as \'93Corporation\'94, \'93Inc\'94, and \'93LLC\'94 which would artificially inflate cosine similarity. We then use the fuzzy merge to keep all records in the individual contributions dataset for which the self-reported employer name is at least 97.5% similar to a name in our list of common names. While this threshold is somewhat arbitrary, manual inspection of results on a small subset of data indicated that at thresholds below 97.5%, a high number of self-reported employer names were incorrectly matched to a common name in the dataset - that is, a self-reported name was falsely identified as matching with a Russell 1000 name, when it should not have been. In fact, below this threshold there seems to be more \'93false matches\'94 than \'93true matches\'94. At thresholds above 97.5%, these instances seem to occur very rarely, and the vast majority of matches appear to be correct. To see the effect of changing these thresholds, the output includes separate files for thresholds of 97.5%, 98.5%, and 100%. 100% is the most conservative threshold and only includes individuals for which the employer string is exactly the same as a string in our list of common names. As a baseline, we generally choose to use results from the 98.5% threshold, which strikes a nice middle ground.\
+\
+In theory, we do not need to use a \'93fuzzy merge\'94 to match reported PAC names and actual PAC names, as the information on PAC contributions should include the FEC ID number of the contributor, which can be matched to the FEC ID number of the corporate PAC. However, there seems to be a frequent error where, most of the time, the reported ID number is actually the ID number of the recipient, rather than the contributor. For this reason, we must do a \'93fuzzy merge\'94 between the reported contributor name and the list of PAC names associated with the Russell 1000. We use the same method and thresholds as described in the preceding paragraph. The only difference is that we include the terms \'93PAC\'94 and \'93Political Action Committee\'94 in our list of common phrases we remove which might artificially inflate cosine similarity.\
+\
+Ultimately, this matching process results in two separate datasets, one containing all contributions by individual employees of the Russell 1000 corporations (\'93contributions_by_individuals_of_Russell_1000_companies_2009_to_2020.csv\'94), and one containing all contributions by PACs associated with the Russell 1000 corporations (\'93contributions_by_PACs_of_Russell_1000_companies_2009_to_2020.csv\'94). These files are described in more detail below. Once we have this dataset, we are also interested in breaking down not only contributions by firm, but by industry. \
+\
+To do this, we first have to assign firms to industries The most common industrial classification system used in government sources is the North American Industrial Classification System (NAICS), which the government uses to classify business establishments based on their primary activity. NAICS codes are 6-digit codes, but researchers can also use the first 2 or 4 digits of NAICS codes for a more aggregated view of industrial classification. In particular, 2-digit NAICS codes correspond to sectors, 4-digit NAICS codes correspond to industry groups, and 6-digit NAICS codes correspond to national industries. For instance, NAICS sector 51 corresponds to \'93Information\'94, NAICS industry group 5111 corresponds to \'93Newspaper, Periodical, Book, and Directory Publishers\'94, and NAICS national industry 511110 corresponds to \'93Newspaper Publishers\'94.\
+\
+Government data such as the Economic Census assigns NAICS codes at the establishment level, rather than the firm level, and establishment-level government data is not available to the public. Thus, there is no accessible government measure of the primary industry to which each Russell 1000 corporation belongs. Furthermore, companies can operate in many different industries. For instance, Berkshire Hathaway owns both Dairy Queen and GEICO, which obviously are in very disparate industry classifications. \
+\
+Because most Russell 1000 corporations operate in more than one industry, we thus assign each Russell 1000 corporation to the \'93primary industry\'94 in which it operates. To determine this, we primarily use data from the NAICS Association ({\field{\*\fldinst{HYPERLINK "https://www.naics.com/"}}{\fldrslt 
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul \ulc2 https://www.naics.com/}}), which has information on the primary industries of many, but not all, Russell 1000 companies. For instance, here we can see that the primary 6-digit NAICS code of Berkshire Hathaway is 524126, \'93Direct Property and Casualty Insurance Carriers\'94: {\field{\*\fldinst{HYPERLINK "https://www.naics.com/company-profile-page/?co=9666"}}{\fldrslt 
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul \ulc2 https://www.naics.com/company-profile-page/?co=9666}}
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul \ulc2 .
+\f0 \cf0 \kerning1\expnd0\expndtw0 \ulnone  When the NAICS association does not have data on the primary NAICS code of a company, we instead rely on information from {\field{\*\fldinst{HYPERLINK "https://siccode.com/"}}{\fldrslt 
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul https://siccode.com/}}
+\f1 \cf2 \expnd0\expndtw0\kerning0
+\ul  
+\f0 \cf0 \kerning1\expnd0\expndtw0 \ulnone . The information obtained is all at the 6-digit level, and from here, we can simply take the first 2 and 4 digits of each company\'92s primary NAICS code. When breaking things down by industry, we present results at the 2-digit, 4-digit, and 6-digit NAICS code levels. The Excel file \'93Russell_1000_Companies_and_Primary_Industries.xlsx\'94 contains a list of each Russell 1000 company and its primary 6-digit NAICS industry.\
+\
+Next, for the individual contributions data we are also interested in breaking down contributions by executives vs. non-executives. More particularly, we define an \'93executive\'94 as someone reporting one of the following occupations:\
+\
+\pard\tx220\tx720\pardeftab720\li720\fi-720\partightenfactor0
+\ls1\ilvl0\cf0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Executive Officer (CEO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Operating Officer (COO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Operations Officer (COO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Marketing Officer (CMO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Development Officer (CDO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}Chief Business Development Officer (CBDO)\expnd0\expndtw0\kerning0
+\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Technology Officer (CTO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Technical Officer (CTO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Chief Financial Officer (CFO)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Human Resources Manager\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Human Resources Director\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Human Resources Executive\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+President\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Senior Vice President (SVP)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Global Vice President (GVP)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Vice President (VP)\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Partner\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Principal\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+General Manager\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+Director\
+\ls1\ilvl0\kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}Executive Director\
+\pard\tx720\pardeftab720\partightenfactor0
+\cf0 \
+We classify individuals as \'93executives\'94 if their self-reported occupations match with any of the above titles or acronyms, either as an exact match or if the self-reported occupation contains one of these titles. (For instance, \'93CEO of Apple\'94 contains the phrase \'93CEO\'94.) We do not rely on fuzzy merge using cosine similarity in order to identify individuals as executives.\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 \
+Description of Output:  \
+\
+There are two primary types of output files; one type corresponds to contributions by individuals, and another corresponds to contributions by PACs. \
+\
+First, there are two transaction level files.\
+\
+1. The file \'93contributions_by_individuals_of_Russell_1000_companies_2009_to_2020.csv\'94 contains the data on all transactions by individual employees of Russell 1000 companies, who had a cosine similarity match of at least 0.975 (I.e., the unit of observation is a transaction). This file has approximately 6.4 million observations. The file contains information on the employees\'92 name (SELF_REPORTED_EMPLOYER), reported employer (SELF_REPORTED_EMPLOYER), reported occupation (SELF_REPORTED_OCCUPATION), whether the employee is an executive or not (EXECUTIVE_OR_NON_EXECUTIVE_EMPLOYEE), the corresponding Russell 1000 company (RUSSELL_1000_EMPLOYER), the year of the transaction (TRANSACTION_YEAR), the amount of the transaction (TRANSACTION_AMT), the transaction code (TRANSACTION_CODE), the general transaction category (political entities, super PACs/hybrid PACs, or independent expenditures) (TRANSACTION_CATEGORY), and the cosine similarity match which ranges from 0.975 to 1 (COSINE_SIMILARITY).\
+\
+2. The file \'93contributions_by_PACs_of_Russell_1000_companies_2009_to_2020.csv\'94 contains the data on all transactions by corporate PACs affiliated with the Russell 1000 companies, who had a cosine similarity match of at least 0.975 (I.e., the unit of observation is a transaction). The file contains each information on the PAC Name (PAC_NAME), associated Russell 1000 corporation (RUSSELL_1000_COMPANY), year of transaction (TRANSACTION_YEAR), amount of the transaction (TRANSACTION_AMT), transaction type code (TRANSACTION_TP), and the cosine similarity match which ranges from 0.975 to 1 (COSINE_SIMILARITY).\
+\
+Second, there are several types of more aggregated files.\
+\
+1. For PACs, the files \'93total_PAC_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_0.975.xlsx\'94, \'93total_PAC_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_0.985.xlsx\'94, and \'93total_PAC_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_1.xlsx\'94 contain information on total PAC contributions by each Russell 1000 company in each year, using the cosine similarity thresholds of 97.5%, 98.5%, and 100%, respectively. The unit of observation is the company-year, with the variable TOTAL_CONTRIBUTIONS indicating the amount that company\'92s PACs contributed in that year.\
+\
+2. For PACs, the files \'93total_PAC_contributions_by_NAICS_2_digit_industry_2009_to_2020_similarity_threshold_0.985.xlsx\'94, \'93total_PAC_contributions_by_NAICS_4_digit_industry_2009_to_2020_similarity_threshold_0.985.xlsx\'94, and \'93total_PAC_contributions_by_NAICS_6_digit_industry_2009_to_2020_similarity_threshold_0.985.xlsx\'94 contain information on contributions by industry (where companies are assigned to industries as described above), using the 2-digit, 4-digit, and 6-digit NAICS code levels of industrial aggregation, respectively. The unit of observation is the industry-year, with the variable TOTAL_CONTRIBUTIONS indicating the amount that PACs whose company is contained in the given industry contributed in that year.\
+\
+3. For individuals, the files \'93total_employee_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_0.975.xlsx\'94, \'93total_employee_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_0.985.xlsx\'94, and \'93total_employee_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_1.xlsx\'94 contain information on total employee contributions by each Russell 1000 company in each year, using the cosine similarity thresholds of 97.5%, 98.5%, and 100%, respectively. The unit of observation is the company-year, with the variable TOTAL_CONTRIBUTIONS indicating the amount that employees of that company contributed in that year.\
+\
+4. For individuals, the files \'93total_employee_contributions_by_NAICS_2_digit_industry_2009_to_2020_similarity_threshold_0.985.xlsx\'94, \'93total_employee_contributions_by_NAICS_4_digit_industry_2009_to_2020_similarity_threshold_0.985.xlsx\'94, and \'93total_employee_contributions_by_NAICS_6_digit_industry_2009_to_2020_similarity_threshold_0.985.xlsx\'94 contain information on contributions by industry (where companies are assigned to industries as described above), using the 2-digit, 4-digit, and 6-digit NAICS code levels of industrial aggregation, respectively. The unit of observation is the industry-year, with the variable TOTAL_CONTRIBUTIONS indicating the amount that employees of companies is contained in the given industry contributed in that year.\
+\
+5. For individuals, the file \'93total_employee_contributions_broken_down_by_employee_type_by_Russell_1000_company_2009_to_2020_similarity_threshold_0.985.xlsx\'94 contains information on total employee contributions by each Russell 1000 company in each year, broken down by employee type (executive vs. non-executive). The unit of observation is the industry-year-employee type, with the variable TOTAL_CONTRIBUTIONS indicating the amount that employees of the given employee type of that company contributed in that year.}
