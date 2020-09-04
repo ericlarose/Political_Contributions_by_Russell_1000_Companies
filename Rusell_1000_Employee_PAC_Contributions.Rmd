@@ -1,0 +1,875 @@
+---
+title: "MDI Scholars - Contributions by Employees of, and PACS Associated with, Russell 1000 Companies"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(readr)
+library(readxl)
+library(data.table)
+library(stringdist)
+library(fuzzyjoin)
+library(tm)
+library(stringr)
+library(openxlsx)
+
+#setwd("/Users/ericlarose/Documents/Georgetown/MDI_Scholars/")
+```
+
+Data Sources:
+1. List of Russell 1000 Companies. This list is from July 2019 and comes from: https://content.ftserussell.com/sites/default/files/support_document/RU1000_MembershipList_20190701.pdf. Note that the Russell 1000 membership list is redefined in July of each year, so this is the most current membership list. The list will be redefined in July of 2020.
+2. Data on individual contributions. This comes from the FEC data on "Contributions by individuals", available at: https://www.fec.gov/data/browse-data/?tab=bulk-data. The data comes in six files: 2009-2010, 2011-2012, 2013-2014, 2015-2016, 2017-2018, and 2019-2010.
+3. Data on contributions from committees to candidates and independent expenditures. This comes from the FEC data on "Contributions from committees to candidates & independent expenditures", available at: https://www.fec.gov/data/browse-data/?tab=bulk-data. The data comes in six files: 2009-2010, 2011-2012, 2013-2014, 2015-2016, 2017-2018, and 2019-2010.
+4. Data on contributions from committees to other committees. This comes from the FEC data on "Any transaction from one committee to another", available at: https://www.fec.gov/data/browse-data/?tab=bulk-data. The data comes in six files: 2009-2010, 2011-2012, 2013-2014, 2015-2016, 2017-2018, and 2019-2010. 
+5. Data on all political committees. We use this to get the names of political committees and match them to committee IDs in our contributions data. This comes from the FEC data on "Committee master", available at: https://www.fec.gov/data/browse-data/?tab=bulk-data. The data comes in six files: 2009-2010, 2011-2012, 2013-2014, 2015-2016, 2017-2018, and 2019-2010.
+
+For this exericise, we want to calculate: From 2010-20, Russell 1000 companies (via direct employee contributions and corporate PACs) contributed $\$X$ to political entities (federal candidates, PACs, party committees); Russell 1000 company employees also contributed $\$X$ to SuperPACs.
+
+# Reading in and Cleaning Data on Contributions from Individuals
+
+```{r}
+# Read in data on individual contributions.
+individual_cont_2009_2010 <- fread('Individual_Contributions/indiv10/itcont.txt', sep = '|')
+individual_cont_2011_2012 <- fread('Individual_Contributions/indiv12/itcont.txt', sep = '|')
+individual_cont_2013_2014 <- fread('Individual_Contributions/indiv14/itcont.txt', sep = '|')
+```
+
+```{r}
+individual_cont_2015_2016 <- fread('Individual_Contributions/indiv16/itcont.txt', sep = '|')
+individual_cont_2017_2018 <- fread('Individual_Contributions/indiv18/itcont.txt', sep = '|')
+individual_cont_2019_2020 <- fread('Individual_Contributions/indiv20/itcont.txt', sep = '|')
+```
+
+Note that we find ourselves in the unfortunate process of needing to clean each dataset individually, BEFORE we append them all together. This is because as is, the data will be too large if we try to append all the raw files together. First, keep only the variables we need. See https://www.fec.gov/campaign-finance-data/contributions-individuals-file-description/ for a description of variables.
+
+```{r}
+# Keep only variables we need: 
+individual_cont_2009_2010 <- individual_cont_2009_2010 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V21) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V21)
+individual_cont_2011_2012 <- individual_cont_2011_2012 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V21) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V21)
+individual_cont_2013_2014 <- individual_cont_2013_2014 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V21) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V21)
+individual_cont_2015_2016 <- individual_cont_2015_2016 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V21) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V21)
+individual_cont_2017_2018 <- individual_cont_2017_2018 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V21) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V21)
+individual_cont_2019_2020 <- individual_cont_2019_2020 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V21) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V21)
+```
+
+Next, for each file keep only contributions from individuals and PACs, and contributions with an associated positive amount of money. 
+
+```{r}
+# For each file, keep only individual and PAC contributions. Also drop any contributions which have a negative amount of money associated with them.
+individual_cont_2009_2010 <- individual_cont_2009_2010 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+individual_cont_2011_2012 <- individual_cont_2011_2012 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+individual_cont_2013_2014 <- individual_cont_2013_2014 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+individual_cont_2015_2016 <- individual_cont_2015_2016 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+individual_cont_2017_2018 <- individual_cont_2017_2018 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+individual_cont_2019_2020 <- individual_cont_2019_2020 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+```
+
+Next step is to keep only transaction types that would correspond to individuals contributing to political entities (federal candidates, PACs, party committees). The list of transaction types is avilable here: https://www.fec.gov/campaign-finance-data/transaction-type-code-descriptions/ 
+
+```{r}
+# List of transaction types that we want to keep
+transaction_type_list <- c("10", "11", "15", "15C", "15E", "15I", "15T", "15Z", "18K", "18L", "18U", "22Y", "24A", "24C", "24E", "24F", "24I", "24K", "24N', 24P", "24T", "24U", "24Z")
+
+# Keep only specified transaction types
+individual_cont_2009_2010 <- individual_cont_2009_2010 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+individual_cont_2011_2012 <- individual_cont_2011_2012 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+individual_cont_2013_2014 <- individual_cont_2013_2014 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+individual_cont_2015_2016 <- individual_cont_2015_2016 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+individual_cont_2017_2018 <- individual_cont_2017_2018 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+individual_cont_2019_2020 <- individual_cont_2019_2020 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+```
+
+Next step is to create a variable equal to the transaction year, then keep only transactions from the appropriate year. 
+
+```{r}
+# Keep only transactions corresponding to appropriate year.
+individual_cont_2009_2010 <- individual_cont_2009_2010 %>% filter(TRANSACTION_DT %% 10000 %in% c(2009, 2010))
+individual_cont_2011_2012 <- individual_cont_2011_2012 %>% filter(TRANSACTION_DT %% 10000 %in% c(2011, 2012))
+individual_cont_2013_2014 <- individual_cont_2013_2014 %>% filter(TRANSACTION_DT %% 10000 %in% c(2013, 2014))
+individual_cont_2015_2016 <- individual_cont_2015_2016 %>% filter(TRANSACTION_DT %% 10000 %in% c(2015, 2016))
+individual_cont_2017_2018 <- individual_cont_2017_2018 %>% filter(TRANSACTION_DT %% 10000 %in% c(2017, 2018))
+individual_cont_2019_2020 <- individual_cont_2019_2020 %>% filter(TRANSACTION_DT %% 10000 %in% c(2019, 2020))
+```
+
+Now combine files together for all years. 
+
+```{r}
+# Combine all datasets for individual contributions together. 
+individual_cont_2009_2020 <- bind_rows(individual_cont_2009_2010, individual_cont_2011_2012, individual_cont_2013_2014, individual_cont_2015_2016, individual_cont_2017_2018, individual_cont_2019_2020)
+
+# Save this dataset
+save(individual_cont_2009_2020, file = 'individual_cont_2009_2020.RData')
+
+# Remove the individual files, to save memory
+rm(individual_cont_2009_2010, individual_cont_2011_2012, individual_cont_2013_2014, individual_cont_2015_2016, individual_cont_2017_2018, individual_cont_2019_2020)
+```
+
+# Reading in and Cleaning Data on Contributions from Committees to Candidates and Independent Expenditures
+
+```{r}
+# Read in data on committee contributions.
+committee_cont_2009_2010 <- fread('Committee_Contributions/2010/itpas2.txt', sep = '|')
+committee_cont_2011_2012 <- fread('Committee_Contributions/2012/itpas2.txt', sep = '|')
+committee_cont_2013_2014 <- fread('Committee_Contributions/2014/itpas2.txt', sep = '|')
+committee_cont_2015_2016 <- fread('Committee_Contributions/2016/itpas2.txt', sep = '|')
+committee_cont_2017_2018 <- fread('Committee_Contributions/2018/itpas2.txt', sep = '|')
+committee_cont_2019_2020 <- fread('Committee_Contributions/2020/itpas2.txt', sep = '|')
+```
+
+Append all the datasets below:
+```{r}
+# Convert 11th variable from integer to character in all datasets.
+committee_cont_2009_2010$V11 <- as.character(committee_cont_2009_2010$V11)
+committee_cont_2011_2012$V11 <- as.character(committee_cont_2011_2012$V11)
+committee_cont_2013_2014$V11 <- as.character(committee_cont_2013_2014$V11)
+committee_cont_2019_2020$V11 <- as.character(committee_cont_2019_2020$V11)
+
+# Combine all datasets for committee contributions to candidates together. 
+committee_cont_2009_2020 <- bind_rows(committee_cont_2009_2010, committee_cont_2011_2012, committee_cont_2013_2014, committee_cont_2015_2016, committee_cont_2017_2018, committee_cont_2019_2020)
+
+# Save this dataset
+save(committee_cont_2009_2020, file = 'committee_cont_2009_2020.RData')
+
+# Remove the individual files, to save memory
+rm(committee_cont_2009_2010, committee_cont_2011_2012, committee_cont_2013_2014, committee_cont_2015_2016, committee_cont_2017_2018, committee_cont_2019_2020)
+```
+
+Now we can keep only variables that we need. See https://www.fec.gov/campaign-finance-data/contributions-committees-candidates-file-description/ for a description of variables.
+
+```{r}
+# Keep only variables we need: 
+committee_cont_2009_2020 <- committee_cont_2009_2020 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V22) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V22)
+```
+
+Next, keep only contributions from individuals and PACs, and contributions with an associated positive amount of money. 
+
+```{r}
+# Keep only individual and PAC contributions. Also drop any contributions which have a negative amount of money associated with them.
+committee_cont_2009_2020 <- committee_cont_2009_2020 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+```
+
+Next step is to keep only transaction types that would correspond to individuals contributing to political entities (federal candidates, PACs, party committees). The list of transaction types is avilable here: https://www.fec.gov/campaign-finance-data/transaction-type-code-descriptions/ 
+
+```{r}
+# Keep only specified transaction types
+committee_cont_2009_2020 <- committee_cont_2009_2020 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+```
+
+Next step is to create a variable equal to the transaction year, then keep only transactions from the appropriate year. 
+
+```{r}
+# Keep only transactions corresponding to appropriate year.
+committee_cont_2009_2020 <- committee_cont_2009_2020 %>% filter(TRANSACTION_DT %% 10000 %in% c(2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020))
+```
+
+# Reading in and Cleaning Data on Contributions from Committees to Other Committees
+
+```{r}
+# Read in data on committee contributions.
+committee_cont_other_committees_2009_2010 <- fread('Committee_Contributions/2010/itoth.txt', sep = '|')
+committee_cont_other_committees_2011_2012 <- fread('Committee_Contributions/2012/itoth.txt', sep = '|')
+committee_cont_other_committees_2013_2014 <- fread('Committee_Contributions/2014/itoth.txt', sep = '|')
+committee_cont_other_committees_2015_2016 <- fread('Committee_Contributions/2016/itoth.txt', sep = '|')
+committee_cont_other_committees_2017_2018 <- fread('Committee_Contributions/2018/itoth.txt', sep = '|')
+committee_cont_other_committees_2019_2020 <- fread('Committee_Contributions/2020/itoth.txt', sep = '|')
+```
+
+Append all the datasets below:
+```{r}
+# Convert 11th variable from integer to character in all datasets.
+committee_cont_other_committees_2009_2010$V11 <- as.character(committee_cont_other_committees_2009_2010$V11)
+
+# Combine all datasets for committee contributions to candidates together. 
+committee_cont_other_committees_2009_2020 <- bind_rows(committee_cont_other_committees_2009_2010, committee_cont_other_committees_2011_2012, committee_cont_other_committees_2013_2014, committee_cont_other_committees_2015_2016, committee_cont_other_committees_2017_2018, committee_cont_other_committees_2019_2020)
+
+# Save this dataset
+save(committee_cont_other_committees_2009_2020, file = 'committee_cont_other_committees_2009_2020.RData')
+
+# Remove the individual files, to save memory
+rm(committee_cont_other_committees_2009_2010, committee_cont_other_committees_2011_2012, committee_cont_other_committees_2013_2014, committee_cont_other_committees_2015_2016, committee_cont_other_committees_2017_2018, committee_cont_other_committees_2019_2020)
+```
+
+Now we can keep only variables that we need. See https://www.fec.gov/campaign-finance-data/any-transaction-one-committee-another-file-description/ for a description of variables.
+
+```{r}
+# Keep only variables we need: 
+committee_cont_other_committees_2009_2020 <- committee_cont_other_committees_2009_2020 %>% select(V1, V6, V7, V8, V12, V13, V14, V15, V16, V21) %>% rename(CMTE_ID = V1, TRANSACTION_TP = V6, ENTITY_TP = V7, NAME = V8, EMPLOYER = V12, OCCUPATION = V13, TRANSACTION_DT = V14, TRANSACTION_AMT = V15, OTHER_ID	= V16, SUB_ID = V21)
+```
+
+Next, keep only contributions from individuals and PACs, and contributions with an associated positive amount of money. 
+
+```{r}
+# Keep only individual and PAC contributions. Also drop any contributions which have a negative amount of money associated with them.
+committee_cont_other_committees_2009_2020 <- committee_cont_other_committees_2009_2020 %>% filter(ENTITY_TP == "IND" | ENTITY_TP == "PAC") %>% filter(TRANSACTION_AMT > 0)
+```
+
+Next step is to keep only transaction types that would correspond to individuals contributing to political entities (federal candidates, PACs, party committees). The list of transaction types is avilable here: https://www.fec.gov/campaign-finance-data/transaction-type-code-descriptions/ 
+
+```{r}
+# Keep only specified transaction types
+committee_cont_other_committees_2009_2020 <- committee_cont_other_committees_2009_2020 %>% filter(TRANSACTION_TP %in% transaction_type_list)
+```
+
+Next step is to create a variable equal to the transaction year, then keep only transactions from the appropriate year. 
+
+```{r}
+# Keep only transactions corresponding to appropriate year.
+committee_cont_other_committees_2009_2020 <- committee_cont_other_committees_2009_2020 %>% filter(TRANSACTION_DT %% 10000 %in% c(2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020))
+```
+
+# Splitting Up Data
+
+This step is really confusing, but the individual data includes PACs, and the committee data includes some individuals. The main distiction is that the committee data generally includes contributions to specific candidates. Thus, we want to split both datasets up into individuals and PACs, and then combine these across datasets. This will give us two datasets, one consisting of contributions by individuals, and one consisting of contributions by PACs. 
+
+```{r}
+# Create dataset with contributions by PACs
+contributions_by_PACs <- bind_rows(filter(committee_cont_2009_2020, ENTITY_TP == "PAC"), filter(individual_cont_2009_2020, ENTITY_TP == "PAC"), filter(committee_cont_other_committees_2009_2020, ENTITY_TP == "PAC"))
+
+# Create dataset with contributions by individuals
+contributions_by_individuals <- bind_rows(filter(committee_cont_2009_2020, ENTITY_TP == "IND"), filter(individual_cont_2009_2020, ENTITY_TP == "IND"), filter(committee_cont_other_committees_2009_2020, ENTITY_TP == "IND"))
+```
+
+```{r}
+# Save these two datasets
+save(contributions_by_PACs, file = 'contributions_by_PACs_2009_2020.RData')
+save(contributions_by_individuals, file = 'contributions_by_individuals_2009_2020.RData')
+
+# Remove the individual files, to save memory
+rm(committee_cont_2009_2020, individual_cont_2009_2020)
+```
+
+## Calculating Contributions by Individuals who are Russell 1000 Employees
+
+Here, we want to identify contributions by individuals who are employees of one of the Russell 1000 corporations.
+
+```{r}
+# Get a list of unique values of the employer value in the dataset
+individual_employer_names <- tibble::enframe(unique(contributions_by_individuals$EMPLOYER))
+
+# Clean a "clean" vector where we remove punctuation and common words from 
+# list of employers
+individual_employer_names$employer_cleaned <- individual_employer_names$value
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[-]", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[/]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[.]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[,]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[?]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "AND", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[&]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[']", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[!]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[@]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[$]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[;]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[%]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[(]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "[)]", "")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " LLP", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " CORPORATION", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " CORP", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " COMPANY", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " THE", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " INC", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " LLC", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " LIMITED", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, " LTD", " ")
+str_replace_all(individual_employer_names$employer_cleaned, "LLP ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "CORPORATION ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "CORP ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "COMPANY ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "THE ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "INC ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "LLC ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "LIMITED ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "LTD ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "  ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "   ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "    ", " ")
+individual_employer_names$employer_cleaned <- str_replace_all(individual_employer_names$employer_cleaned, "     ", " ")
+
+# Removing extra spaces
+individual_employer_names$employer_cleaned <- trimws(individual_employer_names$employer_cleaned)
+
+# Get a list of unique values of the `employer_cleaned` variable
+individual_employer_names_cleaned <- tibble::enframe(unique(individual_employer_names$employer_cleaned))
+
+# Remove specific strings corresponding to self-employed individuals, retired, unemployed, NA, etc.
+individual_employer_names_cleaned <- individual_employer_names_cleaned %>% filter(value != "" & value != "SELF EMPLOYED" & value != "INFO REQUESTED" & value != "SELF" & value != "NA" & value != "NONE" & value != "RETIRED" & value != "SELFEMPLOYED" & value != "UNEMPLOYED" & value != "NOT EMPLOYED")
+
+```
+
+Next, we need to read in a list of the Russell 1000 corporations and their associated "common names", and then apply the same cleaning steps to this string containing the common names.
+
+```{r}
+# Load in list of Russell 1000 companies "official" names and associated "common names"
+Russell_1000_official_common_names <- read_xlsx('Russell_1000_Company_Official_Names_vs_Common_Names.xlsx', sheet = 'Russell_1000_Off_&_Common_Names',col_names = TRUE)
+
+# Create a new variable with cleaned "common names", then apply the same cleaning procedures
+Russell_1000_official_common_names$common_names_cleaned <- Russell_1000_official_common_names$`Common Names`
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[-]", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[/]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[.]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[,]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[?]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "AND", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[&]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[']", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[!]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[@]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[$]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[;]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[%]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[(]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "[)]", "")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " LLP", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " CORPORATION", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " CORP", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " COMPANY", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " THE", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " INC", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " LLC", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, " LIMITED", " ")
+str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "LLP ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "CORPORATION ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "CORP ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "COMPANY ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "THE ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "INC ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "LLC ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "LIMITED ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "  ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "   ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "    ", " ")
+Russell_1000_official_common_names$common_names_cleaned <- str_replace_all(Russell_1000_official_common_names$common_names_cleaned, "     ", " ")
+
+# Removing extra spaces
+Russell_1000_official_common_names$common_names_cleaned <- trimws(Russell_1000_official_common_names$common_names_cleaned)
+
+# Get a list of unique values of the `common_names_cleaned` variable
+Russell_1000_common_names_cleaned <- tibble::enframe(unique(Russell_1000_official_common_names$common_names_cleaned))
+```
+
+Next, do a string merge based on cosine similarity where we keep all observations that have at least a 97.5% match.
+
+```{r}
+# Breaking this down into chunks to get cosine similarity results, since the stringdist_join command tends to break down for more than about 10,000 observations. We run a loop where we break this down into chunks of 10,000 observations at a time. 
+cosine_similarity_results_employer_names <- stringdist_left_join(individual_employer_names_cleaned[1:10000,], Russell_1000_common_names_cleaned, by = c("value"="value"), ignore_case = T, method = 'cosine', max_dist = 0.025, distance_col = "cosine_sim_dist")
+
+for (i in seq(10000, 10000*(floor(nrow(individual_employer_names_cleaned)/10000)-1), 10000)){
+  print(i)
+  j <- i + 1
+  k <- i + 10000
+  cosine_similarity_results_employer_names <- rbind(cosine_similarity_results_employer_names, stringdist_left_join(individual_employer_names_cleaned[j:k,], Russell_1000_common_names_cleaned, by = c("value"="value"), ignore_case = T, method = 'cosine', max_dist = 0.025, distance_col = "cosine_sim_dist"))
+}
+
+# Accounting for the last case
+cosine_similarity_results_employer_names <- rbind(cosine_similarity_results_employer_names, stringdist_left_join(individual_employer_names_cleaned[(10000*(floor(nrow(individual_employer_names_cleaned)/10000))):nrow(individual_employer_names_cleaned),], Russell_1000_common_names_cleaned, by = c("value"="value"), ignore_case = T, method = 'cosine', max_dist = 0.025, distance_col = "cosine_sim_dist"))
+
+# Save this dataset
+save(cosine_similarity_results_employer_names, file = 'cosine_similarity_results_employer_names.RData')
+```
+
+We now have a completed list of employer names in the individual contributions dataset that have been successfully "matched", that is, there is a comparable name in the Russell 1000 index that is at least 97.5% similar (using cosine similarity). Let's merge to get this information in our dataset.
+
+```{r}
+# Keep only employer names with a match
+cosine_similarity_results_employer_names <- filter(cosine_similarity_results_employer_names, !is.na(cosine_sim_dist))
+
+# Keep only unique values from the match results
+cosine_similarity_results_employer_names <- cosine_similarity_results_employer_names %>% group_by(value.x) %>%filter(value.x == min(value.x)) %>% filter(1:n() == 1)
+
+contributions_by_individuals <- left_join(contributions_by_individuals, individual_employer_names, by = c("EMPLOYER" = "value"))
+contributions_by_individuals <- inner_join(contributions_by_individuals, cosine_similarity_results_employer_names, by = c("employer_cleaned" = "value.x")) 
+contributions_by_individuals <- contributions_by_individuals %>% select(-name.x, -name.y) %>% rename(Ruseell_1000_common_name = value.y)
+contributions_by_individuals <- contributions_by_individuals %>% inner_join(Russell_1000_official_common_names, by = c("Ruseell_1000_common_name" = "common_names_cleaned"))
+
+```
+
+Next, we want to clean up the contributions by individuals file for export to CSV. Additionally, we need to create variables corresponding to the type of donation (independent expenditures, committee contributions, and contributions to PACs/SuperPACs).
+
+```{r}
+# Clean up the occupation variable by removing punctuation, etc
+contributions_by_individuals$OCCUPATION_CLEANED <- contributions_by_individuals$OCCUPATION
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[-]", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[/]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[.]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[,]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[?]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "AND", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[&]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[']", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[!]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[@]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[$]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[;]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[%]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[(]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "[)]", "")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " LLP", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " CORPORATION", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " CORP", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " COMPANY", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " THE", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " INC", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " LLC", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " LIMITED", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " LTD", " ")
+str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "LLP ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "CORPORATION ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "AND ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, " AND", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "CORP ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "COMPANY ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "THE ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "INC ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "LLC ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "LIMITED ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "LTD ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "  ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "   ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "    ", " ")
+contributions_by_individuals$OCCUPATION_CLEANED <- str_replace_all(contributions_by_individuals$OCCUPATION_CLEANED, "     ", " ")
+
+# Create variable corresponding to type of employee (executive or non-executive)
+contributions_by_individuals$EMPLOYEE_TYPE <- "NON-EXECUTIVE"
+# Below, we do exact matches, where the name exactly equals one of the executive titles we are looking for.
+contributions_by_individuals$EMPLOYEE_TYPE[contributions_by_individuals$OCCUPATION_CLEANED %in% c("CEO", "CHIEF EXECUTIVE OFFICER", "COO", "CHIEF OPERATING OFFICER", "CHIEF OPERATIONS OFFICER", "CMO", "CHIEF MARKETING OFFICER", "CDO", "CHIEF DEVELOPMENT OFFICER", "CBDO", "CHIEF BUSINESS DEVELOPMENT OFFICER", "CTO", "CHIEF TECHNOLOGY OFFICER", "CHIEF TECHNICAL OFFICER", "CFO", "CHIEF FINANCIAL OFFICER", "HUMAN RESOURCES OFFICER", "HUMAN RESOURCES DIRECTOR", "HUMAN RESOURCES EXECUTIVE", "PRESIDENT", "SVP", "SENIOR VICE PRESIDENT", "GVP", "GLOBAL VICE PRESIDENT", "VP", "VICE PRESIDENT", "PARTNER", "PRINCIPAL", "GENERAL MANAGER", "DIRECTOR", "EXECUTIVE DIRECTOR")] <- "EXECUTIVE"
+# Below, we account for names that "contain" certain keywords
+contains_occupations <- grepl(pattern = "CEO|CFO|CHIEF EXECUTIVE OFFICER|COO|CHIEF OPERATING OFFICER|CHIEF OPERATIONS OFFICER|CMO|CHIEF MARKETING OFFICER|CDO|CHIEF DEVELOPMENT OFFICER|CBDO|CHIEF BUSINESS DEVELOPMENT OFFICER|CTO|CHIEF TECHNOLOGY OFFICER|CHIEF TECHNICAL OFFICER|CFO|CHIEF FINANCIAL OFFICER|HUMAN RESOURCES OFFICER|HUMAN RESOURCES DIRECTOR|HUMAN RESOURCES EXECUTIVE|PRESIDENT|SVP|SENIOR VICE PRESIDENT|GVP|GLOBAL VICE PRESIDENT|VP|VICE PRESIDENT|PARTNER|PRINCIPAL|GENERAL MANAGER|DIRECTOR|EXECUTIVE DIRECTOR", x = contributions_by_individuals$OCCUPATION_CLEANED)
+contributions_by_individuals <- cbind(contributions_by_individuals, contains_occupations)
+contributions_by_individuals$EMPLOYEE_TYPE[contributions_by_individuals$contains_occupations=="TRUE"] <- "EXECUTIVE"
+
+# Create variable corresponding to type of donation (committee contributions vs. contributions to PACs/SuperPACs)
+contributions_by_individuals <- contributions_by_individuals %>% mutate(TRANSACTION_CATEGORY = "POLITICAL ENTITIES (FEDERAL CANDIDATES, PACS, PARTY COMMITTEES)") %>% mutate(TRANSACTION_YEAR = TRANSACTION_DT %% 10000)
+contributions_by_individuals$TRANSACTION_CATEGORY[contributions_by_individuals$TRANSACTION_TP == "10"] = "SUPER PAC/HYBRID PAC"
+contributions_by_individuals$TRANSACTION_CATEGORY[contributions_by_individuals$TRANSACTION_TP == "24A"] = "INDEPENDENT EXPENDITURES"
+contributions_by_individuals$TRANSACTION_CATEGORY[contributions_by_individuals$TRANSACTION_TP == "24E"] = "INDEPENDENT EXPENDITURES"
+
+# Clean up "contributions_by_individuals"  dataframe so that we can export it 
+# to a CSV file. 
+contributions_by_individuals_for_export <- contributions_by_individuals %>% mutate(COSINE_SIMILARITY = 1-`cosine_sim_dist`) %>% select(NAME, SELF_REPORTED_EMPLOYER = EMPLOYER, SELF_REPORTED_OCCUPATION = OCCUPATION, EXECUTIVE_OR_NON_EXECUTIVE_EMPLOYEE = EMPLOYEE_TYPE, RUSSELL_1000_EMPLOYER = `Official Company Name`, TRANSACTION_YEAR, TRANSACTION_AMT, TRANSACTION_TP, TRANSACTION_CATEGORY, COSINE_SIMILARITY)
+
+save(contributions_by_individuals_for_export, file = 'contributions_by_individuals_final_data.RData')
+
+write_csv(contributions_by_individuals_for_export, 'contributions_by_individuals_of_Russell_1000_companies_2009_to_2020.csv')
+```
+
+Now we want to group by company, year, and transaction type (super/hybrid PAC vs. all other contributions) and total across employees, using each of our thresholds for cosine similarity.
+
+```{r}
+# Group over values of our thresholds, and export to Excel
+for (threshold in c(0, 0.015, 0.025)){
+  data_for_export <- contributions_by_individuals %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  data_for_export <- data_for_export %>% group_by(`Official Company Name`, TRANSACTION_YEAR, TRANSACTION_CATEGORY) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export, paste0('total_employee_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Breaking Down Data by Committee
+
+```{r}
+# First, read in data on committee IDs and append.
+committee_ids_2009_2010 <- fread('Committee_IDs/2010/cm.txt', sep = '|') %>% select(V1, V2)
+committee_ids_2011_2012 <- fread('Committee_IDs/2012/cm.txt', sep = '|') %>% select(V1, V2)
+committee_ids_2013_2014 <- fread('Committee_IDs/2014/cm.txt', sep = '|') %>% select(V1, V2)
+committee_ids_2015_2016 <- fread('Committee_IDs/2016/cm.txt', sep = '|') %>% select(V1, V2)
+committee_ids_2017_2018 <- fread('Committee_IDs/2018/cm.txt', sep = '|') %>% select(V1, V2)
+committee_ids_2019_2020 <- fread('Committee_IDs/2020/cm.txt', sep = '|') %>% select(V1, V2)
+
+# We need to keep only the first 2 variables, the committe id and the committee name
+committee_names_ids <- bind_rows(committee_ids_2009_2010,
+                                 committee_ids_2011_2012,
+                                 committee_ids_2013_2014,
+                                 committee_ids_2015_2016,
+                                 committee_ids_2017_2018,
+                                 committee_ids_2019_2020) %>%
+  rename(CMTE_ID = V1, CMTE_NAME = V2)
+
+# Keep only names of unique committees
+committee_names_ids <- committee_names_ids %>%
+  group_by(CMTE_ID) %>%
+  slice(1) %>%
+  ungroup()
+
+# Group over values of our thresholds, and export to Excel
+for (threshold in c(0.015)){
+  data_for_export <- contributions_by_individuals %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  # Group by committee ID and merge to get committee names
+  data_for_export <- data_for_export %>% group_by(CMTE_ID, TRANSACTION_YEAR) %>% 
+    summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) %>% ungroup() %>%
+    left_join(committee_names_ids, by = c('CMTE_ID' = 'CMTE_ID')) %>% 
+      select(CMTE_ID, CMTE_NAME, TRANSACTION_YEAR, TOTAL_CONTRIBUTIONS)
+  
+  write.xlsx(data_for_export, paste0('total_employee_contributions_broken_down_by_committee_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Breaking Down Data by Committee, Company, and Employee Type
+
+```{r}
+# Group over values of our thresholds, and export to Excel
+for (threshold in c(0.015)){
+  data_for_export <- contributions_by_individuals %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  # Group by committee ID and merge to get committee names
+  data_for_export <- data_for_export %>% group_by(CMTE_ID, TRANSACTION_YEAR, 
+                                                  `Official Company Name`, 
+                                                  EMPLOYEE_TYPE) %>% 
+    summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) %>% ungroup() %>%
+    left_join(committee_names_ids, by = c('CMTE_ID' = 'CMTE_ID')) %>% 
+      select(`Official Company Name`, EMPLOYEE_TYPE, CMTE_ID, CMTE_NAME, TRANSACTION_YEAR, TOTAL_CONTRIBUTIONS)
+  
+  write.xlsx(data_for_export, paste0('total_employee_contributions_broken_down_by_committee_company_and_employee_type_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Breaking Down File Above by Employee Type
+
+```{r}
+# Group over values of our thresholds, and export to Excel
+for (threshold in c(0.015)){
+  data_for_export <- contributions_by_individuals %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  data_for_export <- data_for_export %>% group_by(`Official Company Name`, TRANSACTION_YEAR, TRANSACTION_CATEGORY, EMPLOYEE_TYPE) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export, paste0('total_employee_contributions_broken_down_by_employee_type_by_Russell_1000_company_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Breaking Down Data by Industry
+
+First, load in a list of Russell 1000 companies and associated industry. The NAICS code associated with each industry is the NAICS code that provides the highest revenue for the business. Data was manually gathered for each company from naics.com, if available, and if not available, then from siccode.com. We also load in files with descriptions of 6-digit, 4-digit, and 2-digit NAICS codes. This data is available from https://www.census.gov/eos/www/naics/downloadables/downloadables.html ("2-6 digit 2017 Code File").
+
+```{r}
+# Load in dataset on list of Russell 1000 companies and associated 6-digit 
+# NAICS codes. 
+Russell_1000_primary_NAICS_codes <- read_xlsx('Russell_1000_Companies_and_Primary_Industries.xlsx', sheet = 'Russell_1000_Names_Industries', col_names = TRUE)
+
+# Create variables for NAICS4 and NAICS2 codes.
+Russell_1000_primary_NAICS_codes <- Russell_1000_primary_NAICS_codes %>% mutate(Primary_NAICS4 = floor(Primary_NAICS6/100), Primary_NAICS2 = floor(Primary_NAICS6/10000))
+
+# Load in Census data on descriptions of 6-digit, 4-digit, and 2-digit NAICS codes
+NAICS_descriptions <- read_xlsx('2-6 digit_2017_Codes.xlsx', col_names = TRUE)
+NAICS_descriptions <- NAICS_descriptions %>% select(NAICS_Code = `2017 NAICS US   Code`, NAICS_Description = `2017 NAICS US Title`) %>% mutate(Num_Digits = nchar(NAICS_Code))
+# Need to separate out the 2-digit, 4-digit, and 6-digit NAICS codes. 
+NAICS_2_digit_descriptions <- NAICS_descriptions %>% filter(Num_Digits==2) %>% select(-Num_Digits) %>% rename(NAICS_2_Description = NAICS_Description) %>% mutate(NAICS_Code = as.integer(NAICS_Code))
+NAICS_4_digit_descriptions <- NAICS_descriptions %>% filter(Num_Digits==4) %>% select(-Num_Digits) %>% rename(NAICS_4_Description = NAICS_Description) %>% mutate(NAICS_Code = as.integer(NAICS_Code))
+NAICS_6_digit_descriptions <- NAICS_descriptions %>% filter(Num_Digits==6) %>% select(-Num_Digits) %>% rename(NAICS_6_Description = NAICS_Description) %>% mutate(NAICS_Code = as.integer(NAICS_Code))
+
+# Merge to get NAICS descriptions for each Russell 1000 company.
+Russell_1000_primary_NAICS_codes <- Russell_1000_primary_NAICS_codes %>% left_join(NAICS_6_digit_descriptions, by = c("Primary_NAICS6" = "NAICS_Code")) %>% left_join(NAICS_4_digit_descriptions, by = c("Primary_NAICS4" = "NAICS_Code")) %>% left_join(NAICS_2_digit_descriptions, by = c("Primary_NAICS2" = "NAICS_Code"))
+
+# Need to manually input names for some NAICS2 codes (31-33, 44-45, 48-49), using this: 
+# https://classcodes.com/naics-2-digit-sector-codes/
+Russell_1000_primary_NAICS_codes$NAICS_2_Description[Russell_1000_primary_NAICS_codes$Primary_NAICS2 >= 31 & Russell_1000_primary_NAICS_codes$Primary_NAICS2 <= 33] = "Manufacturing"
+Russell_1000_primary_NAICS_codes$NAICS_2_Description[Russell_1000_primary_NAICS_codes$Primary_NAICS2 >= 44 & Russell_1000_primary_NAICS_codes$Primary_NAICS2 <= 45] = "Retail Trade"
+Russell_1000_primary_NAICS_codes$NAICS_2_Description[Russell_1000_primary_NAICS_codes$Primary_NAICS2 >= 48 & Russell_1000_primary_NAICS_codes$Primary_NAICS2 <= 49] = "Transportation and Warehousing"
+```
+
+Next, we can merge on industry codes to get our descriptions. Then, we group by industry-year-contribution type and calculate contribution totals in each year, and export to Excel, for 2, 4, and 6-digit NAICS codes.
+
+```{r}
+# Merge dataset on individual contributions to get industry names.
+contributions_by_individuals_by_industry <- contributions_by_individuals %>% left_join(Russell_1000_primary_NAICS_codes, by = c("Official Company Name" = "Company"))
+
+# Group by 2-digit, 4-digit, and 6-digit NAICS industry, at the 0.985 cosine similarity level, and export to Excel
+for (threshold in c(0.015)){
+  data_for_export <- contributions_by_individuals_by_industry %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  # 2 digit NAICS industry
+  data_for_export_NAICS_2 <- data_for_export %>% group_by(NAICS_2_Description, TRANSACTION_YEAR, TRANSACTION_CATEGORY) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export_NAICS_2, paste0('total_employee_contributions_by_NAICS_2_digit_industry_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+  
+  # 4 digit NAICS industry
+  data_for_export_NAICS_4 <- data_for_export %>% group_by(NAICS_4_Description, TRANSACTION_YEAR, TRANSACTION_CATEGORY) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export_NAICS_4, paste0('total_employee_contributions_by_NAICS_4_digit_industry_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+  
+  # 6 digit NAICS industry
+  data_for_export_NAICS_6 <- data_for_export %>% group_by(NAICS_6_Description, TRANSACTION_YEAR, TRANSACTION_CATEGORY) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export_NAICS_6, paste0('total_employee_contributions_by_NAICS_6_digit_industry_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+## Calculating Contributions by Corporate PACs
+
+Here, we merge on the list of corporate PACs associated with the Russell 1000 companies. First, we need to import this dataset, which was handbuilt using data from Open Secrets.
+
+```{r}
+# Load in list of corporate PACs associated with the Russell 1000 companies
+Russell_1000_corporate_PACs <- read_xlsx('Russell_1000_Corporations_Associated_PACs.xlsx', sheet = 'PACs_Associated_w_Russell_1000',col_names = TRUE)
+```
+
+Next, we need to clean up our list of corporate PAC names:
+
+```{r}
+# Create a "clean" vector where we remove punctuation and common words from 
+# list of PACs
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- Russell_1000_corporate_PACs$PAC_NAME
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[-]", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[/]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[.]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[,]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[?]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "AND", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[&]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[']", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[;]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[!]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[@]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[$]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[%]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[(]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "[)]", "")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " LLP", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " CORPORATION", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " CORP", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " COMPANY", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " THE", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " INC", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " LLC", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " LIMITED", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " LTD", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " PAC", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, " POLITICAL ACTION COMMITTEE", " ")
+str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "LLP ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "CORPORATION ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "CORP ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "COMPANY ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "THE ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "INC ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "LLC ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "LIMITED ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "LTD ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "PAC ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "POLITICAL ACTION COMMITTEE ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "  ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "   ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "    ", " ")
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- str_replace_all(Russell_1000_corporate_PACs$PAC_Name_Cleaned, "     ", " ")
+
+# Removing extra spaces
+Russell_1000_corporate_PACs$PAC_Name_Cleaned <- trimws(Russell_1000_corporate_PACs$PAC_Name_Cleaned)
+
+# Get a list of unique values of the `employer_cleaned` variable
+Russell_1000_corporate_PAC_names_cleaned <- tibble::enframe(unique(Russell_1000_corporate_PACs$PAC_Name_Cleaned))
+
+```
+
+Next, we need to apply these same cleaning steps to the contributions by PACs dataset.
+
+```{r}
+# Get list of unique values of PAC names from the dataset
+PAC_names <- tibble::enframe(unique(contributions_by_PACs$NAME)) 
+
+# Clean a "clean" vector where we remove punctuation and common words from 
+# list of PACs
+PAC_names$PAC_name_cleaned <- PAC_names$value
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[-]", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[/]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[.]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[,]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[?]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "AND", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[&]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[']", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[;]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[!]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[@]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[$]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[%]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[(]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "[)]", "")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " LLP", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " CORPORATION", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " CORP", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " COMPANY", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " THE", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " INC", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " LLC", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " LIMITED", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " LTD", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " PAC", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, " POLITICAL ACTION COMMITTEE", " ")
+str_replace_all(PAC_names$PAC_name_cleaned, "LLP ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "CORPORATION ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "CORP ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "COMPANY ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "THE ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "INC ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "LLC ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "LIMITED ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "LTD ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "PAC ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "POLITICAL ACTION COMMITTEE ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "  ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "   ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "    ", " ")
+PAC_names$PAC_name_cleaned <- str_replace_all(PAC_names$PAC_name_cleaned, "     ", " ")
+
+# Removing extra spaces
+PAC_names$PAC_name_cleaned <- trimws(PAC_names$PAC_name_cleaned)
+
+```
+
+Next, we do the string merge, using the cosine similarity method, keeping all PAC names with at least a 97.5% match with a PAC associated with the Russell 1000.
+
+```{r}
+# Breaking this down into chunks to get cosine similarity results
+cosine_similarity_results_PAC_names <- stringdist_left_join(PAC_names[1:10000,], Russell_1000_corporate_PAC_names_cleaned, by = c("PAC_name_cleaned"="value"), ignore_case = T, method = 'cosine', max_dist = 0.025, distance_col = "cosine_sim_dist")
+
+for (i in seq(10000, 10000*(floor(nrow(PAC_names)/10000)-1), 10000)){
+  j <- i + 1
+  k <- i + 10000
+  cosine_similarity_results_PAC_names <- rbind(cosine_similarity_results_PAC_names, stringdist_left_join(PAC_names[j:k,], Russell_1000_corporate_PAC_names_cleaned, by = c("PAC_name_cleaned"="value"), ignore_case = T, method = 'cosine', max_dist = 0.025, distance_col = "cosine_sim_dist"))
+}
+
+# Accounting for the last case
+cosine_similarity_results_PAC_names <- rbind(cosine_similarity_results_PAC_names, stringdist_left_join(PAC_names[(10000*(floor(nrow(PAC_names)/10000))):nrow(PAC_names),], Russell_1000_corporate_PAC_names_cleaned, by = c("PAC_name_cleaned"="value"), ignore_case = T, method = 'cosine', max_dist = 0.025, distance_col = "cosine_sim_dist"))
+
+# Save this dataset
+save(cosine_similarity_results_PAC_names, file = 'cosine_similarity_results_PAC_names.RData')
+
+```
+
+We now have a completed list of PAC names in the individual contributions dataset that have been successfully "matched", that is, there is a comparable name in the list of associated Russell 1000 PACs that is at least 97.5% similar (using cosine similarity). Let's merge to get this information in our dataset.
+
+```{r}
+# Keep only PAC names with a match
+cosine_similarity_results_PAC_names <- filter(cosine_similarity_results_PAC_names, !is.na(cosine_sim_dist))
+
+# Keep only unique values from the match results
+cosine_similarity_results_PAC_names <- cosine_similarity_results_PAC_names %>% group_by(PAC_name_cleaned) %>%filter(PAC_name_cleaned == min(PAC_name_cleaned)) %>% filter(1:n() == 1)
+
+# Doing the merging
+contributions_by_PACs <- left_join(contributions_by_PACs, PAC_names, by = c("NAME" = "value"))
+contributions_by_PACs <- inner_join(contributions_by_PACs, cosine_similarity_results_PAC_names, by = c("PAC_name_cleaned" = "PAC_name_cleaned")) 
+contributions_by_PACs <- contributions_by_PACs %>% select(-name.x, -name.y) %>% rename(Russell_1000_PAC_name = PAC_name_cleaned) %>% inner_join(Russell_1000_corporate_PACs, by = c("Russell_1000_PAC_name" = "PAC_Name_Cleaned")) %>% rename(Company_Name = Associated_Company)
+
+```
+
+Next, we want to clean up the contributions by PACs file for export to CSV.
+
+```{r}
+# Create year variable
+contributions_by_PACs <- contributions_by_PACs %>% mutate(TRANSACTION_YEAR = TRANSACTION_DT %% 10000)
+
+# Clean up "contributions_by_PACs"  dataframe so that we can export it 
+# to a CSV file. 
+contributions_by_PACs_for_export <- contributions_by_PACs %>% mutate(COSINE_SIMILARITY = 1-`cosine_sim_dist`) %>% select(PAC_NAME = NAME,  RUSSELL_1000_COMPANY = Company_Name, TRANSACTION_YEAR, TRANSACTION_AMT, TRANSACTION_TP, COSINE_SIMILARITY)
+
+save(contributions_by_PACs_for_export, file = 'contributions_by_PACs_final_data.RData')
+
+write_csv(contributions_by_PACs_for_export, 'contributions_by_PACs_of_Russell_1000_companies_2009_to_2020.csv')
+```
+
+Now we want to group by company and year and total across PAC contributions, using each of our thresholds for cosine similarity.
+
+```{r}
+# Group over values of our thresholds, and export to Excel
+for (threshold in c(0, 0.015, 0.025)){
+  data_for_export <- contributions_by_PACs %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  data_for_export <- data_for_export %>% group_by(Company_Name, TRANSACTION_YEAR) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export, paste0('total_PAC_contributions_by_Russell_1000_company_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Breaking Down Data by Committee
+
+```{r}
+# Group over values of our thresholds, and export to Excel
+for (threshold in c(0.015)){
+  data_for_export <- contributions_by_PACs %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  # Group by committee ID and merge to get committee names
+  data_for_export <- data_for_export %>% group_by(CMTE_ID, TRANSACTION_YEAR) %>% 
+    summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) %>% ungroup() %>%
+    left_join(committee_names_ids, by = c('CMTE_ID' = 'CMTE_ID')) %>% 
+      select(CMTE_ID, CMTE_NAME, TRANSACTION_YEAR, TOTAL_CONTRIBUTIONS)
+  
+  write.xlsx(data_for_export, paste0('total_PAC_contributions_broken_down_by_committee_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Breaking Down Data by Committee by Company
+
+```{r}
+# Group over values of our thresholds, and export to Excel
+for (threshold in c(0.015)){
+  data_for_export <- contributions_by_PACs %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  # Group by committee ID and merge to get committee names
+  data_for_export <- data_for_export %>% group_by(CMTE_ID, TRANSACTION_YEAR, Company_Name) %>% 
+    summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) %>% ungroup() %>%
+    left_join(committee_names_ids, by = c('CMTE_ID' = 'CMTE_ID')) %>% 
+      select(Company_Name, CMTE_ID, CMTE_NAME, TRANSACTION_YEAR, TOTAL_CONTRIBUTIONS)
+  
+  write.xlsx(data_for_export, paste0('total_PAC_contributions_broken_down_by_committee_and_company_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Breaking Down Data by Industry
+
+In this section, we break down by PAC contributions by industry, following the same steps as for individuals.
+
+```{r}
+# Merge dataset on PAC contributions to get industry names.
+contributions_by_PACs_by_industry <- contributions_by_PACs %>% left_join(Russell_1000_primary_NAICS_codes, by = c("Company_Name" = "Company"))
+
+# Group by 2-digit, 4-digit, and 6-digit NAICS industry, at the 0.985 cosine similarity level, and export to Excel
+for (threshold in c(0.015)){
+  data_for_export <- contributions_by_PACs_by_industry %>% filter(cosine_sim_dist <= (threshold + 0.0000000001))
+  
+  # 2 digit NAICS industry
+  data_for_export_NAICS_2 <- data_for_export %>% group_by(NAICS_2_Description, TRANSACTION_YEAR) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export_NAICS_2, paste0('total_PAC_contributions_by_NAICS_2_digit_industry_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+  
+  # 4 digit NAICS industry
+  data_for_export_NAICS_4 <- data_for_export %>% group_by(NAICS_4_Description, TRANSACTION_YEAR) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export_NAICS_4, paste0('total_PAC_contributions_by_NAICS_4_digit_industry_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+  
+  # 6 digit NAICS industry
+  data_for_export_NAICS_6 <- data_for_export %>% group_by(NAICS_6_Description, TRANSACTION_YEAR) %>% summarize(TOTAL_CONTRIBUTIONS = sum(TRANSACTION_AMT)) 
+  
+  write.xlsx(data_for_export_NAICS_6, paste0('total_PAC_contributions_by_NAICS_6_digit_industry_2009_to_2020_similarity_threshold_', (1-threshold), '.xlsx'))
+}
+```
+
+### Creating Visualizations
+
+This section of code creates visualizations showing the top 10 companies by both PAC and individual employee spending over the period 2009-2020.
+
+```{r}
+# Break down contributions by employee type, and calculate total contributions within the company
+data_for_individual_plot <- contributions_by_individuals %>% filter(cosine_sim_dist <= (0.015 + 0.0000000001)) %>% group_by(`Official Company Name`, EMPLOYEE_TYPE) %>% summarize(TOTAL_CONT_EMPLOYEE_TYPE_2009_2020 = sum(TRANSACTION_AMT)) %>% ungroup() #%>%
+
+data_for_individual_plot <- data_for_individual_plot %>% left_join(data_for_individual_plot %>% spread(EMPLOYEE_TYPE, TOTAL_CONT_EMPLOYEE_TYPE_2009_2020) %>% mutate(TOTAL_EMPLOYEE_CONT_2009_2020 = EXECUTIVE + `NON-EXECUTIVE`)) 
+
+# Rank companies by total contributions, and keep only the top 10 companies
+data_for_individual_plot <- data_for_individual_plot %>% arrange(desc(TOTAL_EMPLOYEE_CONT_2009_2020)) %>% slice(1:20)
+
+# Do a stacked bar chart
+#ggplot(data = data_for_individual_plot) + geom_bar(aes(TOTAL_EMPLOYEE_CONT_2009_2020))
+ggplot(data_for_individual_plot, aes(y=TOTAL_CONT_EMPLOYEE_TYPE_2009_2020/1000000, x=reorder(`Official Company Name`, TOTAL_EMPLOYEE_CONT_2009_2020), fill = EMPLOYEE_TYPE)) + geom_bar(position="stack", stat="identity") + labs(y = "Total Contributions by Employees (Millions of $)", x = "Company", title = "Total Employee Political Contributions, 2009-2020", subtitle = 'Among 10 Companies with Largest Volume of Contributions', fill = 'Employee Type') + coord_flip()
+```
+
+```{r}
+# Do a plot of total PAC contributions
+data_for_PAC_plot <- contributions_by_PACs %>% filter(cosine_sim_dist <= (0.015 + 0.0000000001)) %>% group_by(Company_Name) %>% summarize(TOTAL_CONT_PAC_2009_2020 = sum(TRANSACTION_AMT)) %>% ungroup() #%>%
+
+# Rank companies by total contributions, and keep only the top 10 companies
+data_for_PAC_plot <- data_for_PAC_plot %>% arrange(desc(TOTAL_CONT_PAC_2009_2020)) %>% slice(1:10)
+
+# Do a stacked bar chart
+ggplot(data_for_PAC_plot, aes(y=TOTAL_CONT_PAC_2009_2020/1000000, x=reorder(Company_Name, TOTAL_CONT_PAC_2009_2020))) + geom_bar(position="stack", stat="identity") + labs(y = "Total Contributions by Corporate PACs (Millions of $)", x = "Company", title = "Total Political Contributions by PACs, 2009-2020", subtitle = 'Among 10 Companies with Largest Volume of Contributions', fill = 'Employee Type') + coord_flip()
+```
